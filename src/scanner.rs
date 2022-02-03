@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use btleplug::api::{BDAddr, Central, CentralEvent, Manager as _, Peripheral as _};
@@ -15,6 +15,7 @@ use tokio::sync::broadcast;
 use tokio::sync::broadcast::Sender;
 use tokio_stream::wrappers::BroadcastStream;
 
+#[derive(Default)]
 pub struct ScanConfig {
     /// Index of the Bluetooth adapter to use. The first found adapter is used by default.
     adapter_index: usize,
@@ -28,19 +29,6 @@ pub struct ScanConfig {
     max_results: Option<usize>,
     /// The scan is stopped when timeout duration is reached.
     timeout: Option<Duration>,
-}
-
-impl Default for ScanConfig {
-    fn default() -> Self {
-        Self {
-            adapter_index: 0,
-            address_filter: None,
-            name_filter: None,
-            characteristics_filter: None,
-            max_results: None,
-            timeout: None,
-        }
-    }
 }
 
 impl ScanConfig {
@@ -98,36 +86,45 @@ impl ScanConfig {
     }
 }
 
+pub(crate) struct Session {
+    pub(crate) _manager: Manager,
+    pub(crate) adapter: Adapter,
+}
+
 pub struct Scanner {
-    manager: Manager,
-    adapter: Option<Adapter>,
+    session: Option<Arc<Session>>,
     event_sender: Sender<DeviceEvent>,
     scan_stopper: Option<Trigger>,
-    device_stream_stoppers: Vec<Trigger>,
+    device_stream_stoppers: Arc<RwLock<Vec<Trigger>>>,
+}
+
+impl Default for Scanner {
+    fn default() -> Self {
+        Scanner::new()
+    }
 }
 
 impl Scanner {
-    pub async fn new() -> Result<Scanner, Error> {
-        let manager = Manager::new().await?;
+    pub fn new() -> Self {
         let (event_sender, _) = broadcast::channel(16);
 
-        Ok(Self {
-            manager,
-            adapter: None,
+        Self {
+            session: None,
             event_sender,
             scan_stopper: None,
-            device_stream_stoppers: Vec::new(),
-        })
+            device_stream_stoppers: Arc::new(RwLock::new(Vec::new())),
+        }
     }
 
-    /// Start scanning for devices.
+    /// Start scanning for ble devices.
     pub async fn start(&mut self, config: ScanConfig) -> Result<(), Error> {
-        if self.adapter.is_some() {
+        if self.session.is_some() {
             log::info!("Scanner is already started.");
             return Ok(());
         }
 
-        let mut adapters = self.manager.adapters().await?;
+        let manager = Manager::new().await?;
+        let mut adapters = manager.adapters().await?;
 
         if config.adapter_index >= adapters.len() {
             return Err(Error::DeviceNotFound);
@@ -137,21 +134,30 @@ impl Scanner {
 
         log::trace!("Using adapter: {:?}", adapter);
 
-        let stopper =
-            ScanContext::start(config, adapter.clone(), self.event_sender.clone()).await?;
+        let session = Arc::new(Session {
+            _manager: manager,
+            adapter,
+        });
+        let stopper = ScanContext::start(
+            config,
+            session.clone(),
+            self.event_sender.clone(),
+            self.device_stream_stoppers.clone(),
+        )
+        .await?;
 
         self.scan_stopper = Some(stopper);
-        self.adapter = Some(adapter);
+        self.session = Some(session);
 
         Ok(())
     }
 
-    /// Stop scanning for devices.
+    /// Stop scanning for ble devices.
     pub async fn stop(&mut self) -> Result<(), Error> {
-        if let Some(adapter) = self.adapter.take() {
-            adapter.stop_scan().await?;
+        if let Some(session) = self.session.take() {
+            session.adapter.stop_scan().await?;
             self.scan_stopper.take();
-            self.device_stream_stoppers.clear();
+            self.device_stream_stoppers.write().unwrap().clear();
         } else {
             log::info!("Scanner is already stopped");
         }
@@ -169,7 +175,7 @@ impl Scanner {
             Box::pin(BroadcastStream::new(receiver).filter_map(|x| async move { x.ok() }));
 
         let (trigger, stream) = Valved::new(stream);
-        self.device_stream_stoppers.push(trigger);
+        self.device_stream_stoppers.write().unwrap().push(trigger);
 
         stream
     }
@@ -187,7 +193,7 @@ impl Scanner {
             }));
 
         let (trigger, stream) = Valved::new(stream);
-        self.device_stream_stoppers.push(trigger);
+        self.device_stream_stoppers.write().unwrap().push(trigger);
 
         stream
     }
@@ -196,8 +202,8 @@ impl Scanner {
 struct ScanContext {
     /// Number of matching devices found so far
     result_count: usize,
-    /// Reference to the bluetooth adapter instance
-    adapter: Arc<Adapter>,
+    /// Reference to the bluetooth session instance
+    session: Arc<Session>,
     /// Configurations for the scan, such as filters and stop conditions
     config: ScanConfig,
     /// Whether a connection is needed in order to pass the filter
@@ -215,20 +221,21 @@ struct ScanContext {
 impl ScanContext {
     async fn start(
         config: ScanConfig,
-        adapter: Adapter,
+        session: Arc<Session>,
         sender: Sender<DeviceEvent>,
+        device_stream_stoppers: Arc<RwLock<Vec<Trigger>>>,
     ) -> Result<Trigger, Error> {
         let connection_needed = config.characteristics_filter.is_some();
 
         log::info!("Starting the scan");
 
-        let (stopper, events) = stream_cancel::Valved::new(adapter.events().await?);
+        let (stopper, events) = stream_cancel::Valved::new(session.adapter.events().await?);
 
-        adapter.start_scan(Default::default()).await?;
+        session.adapter.start_scan(Default::default()).await?;
 
         let ctx = ScanContext {
             result_count: 0,
-            adapter: Arc::new(adapter),
+            session,
             config,
             connection_needed,
             filtered: HashSet::new(),
@@ -238,7 +245,7 @@ impl ScanContext {
         };
 
         tokio::spawn(async move {
-            ctx.listen(events).await;
+            ctx.listen(events, device_stream_stoppers).await;
         });
 
         Ok(stopper)
@@ -247,6 +254,7 @@ impl ScanContext {
     async fn listen(
         mut self,
         mut event_stream: Valved<Pin<Box<dyn Stream<Item = CentralEvent> + Send>>>,
+        device_stream_stoppers: Arc<RwLock<Vec<Trigger>>>,
     ) {
         let start_time = Instant::now();
 
@@ -284,11 +292,13 @@ impl ScanContext {
             }
         }
 
+        device_stream_stoppers.write().unwrap().clear();
+
         log::info!("Scanner was stopped.");
     }
 
     async fn on_device_discovered(&mut self, peripheral_id: PeripheralId) {
-        if let Ok(peripheral) = self.adapter.peripheral(&peripheral_id).await {
+        if let Ok(peripheral) = self.session.adapter.peripheral(&peripheral_id).await {
             log::trace!("Device discovered: {:?}", peripheral);
 
             self.apply_filter(peripheral).await;
@@ -296,12 +306,15 @@ impl ScanContext {
     }
 
     async fn on_device_updated(&mut self, peripheral_id: PeripheralId) {
-        if let Ok(peripheral) = self.adapter.peripheral(&peripheral_id).await {
+        if let Ok(peripheral) = self.session.adapter.peripheral(&peripheral_id).await {
             log::trace!("Device updated: {:?}", peripheral);
 
             if self.matched.contains(&peripheral_id) {
                 self.event_sender
-                    .send(DeviceEvent::Updated(Device::new(peripheral)))
+                    .send(DeviceEvent::Updated(Device::new(
+                        self.session.clone(),
+                        peripheral,
+                    )))
                     .ok();
             } else {
                 self.apply_filter(peripheral).await;
@@ -312,12 +325,15 @@ impl ScanContext {
     async fn on_device_connected(&mut self, peripheral_id: PeripheralId) {
         self.connecting.lock().unwrap().remove(&peripheral_id);
 
-        if let Ok(peripheral) = self.adapter.peripheral(&peripheral_id).await {
+        if let Ok(peripheral) = self.session.adapter.peripheral(&peripheral_id).await {
             log::trace!("Device connected: {:?}", peripheral);
 
             if self.matched.contains(&peripheral_id) {
                 self.event_sender
-                    .send(DeviceEvent::Connected(Device::new(peripheral)))
+                    .send(DeviceEvent::Connected(Device::new(
+                        self.session.clone(),
+                        peripheral,
+                    )))
                     .ok();
             } else {
                 self.apply_filter(peripheral).await;
@@ -326,12 +342,15 @@ impl ScanContext {
     }
 
     async fn on_device_disconnected(&mut self, peripheral_id: PeripheralId) {
-        if let Ok(peripheral) = self.adapter.peripheral(&peripheral_id).await {
+        if let Ok(peripheral) = self.session.adapter.peripheral(&peripheral_id).await {
             log::trace!("Device disconnected: {:?}", peripheral);
 
             if self.matched.contains(&peripheral_id) {
                 self.event_sender
-                    .send(DeviceEvent::Disconnected(Device::new(peripheral)))
+                    .send(DeviceEvent::Disconnected(Device::new(
+                        self.session.clone(),
+                        peripheral,
+                    )))
                     .ok();
             }
         }
@@ -403,7 +422,7 @@ impl ScanContext {
 
         log::info!("Found device: {:?}", peripheral);
 
-        let device = Device::new(peripheral);
+        let device = Device::new(self.session.clone(), peripheral);
 
         match self.event_sender.send(DeviceEvent::Discovered(device)) {
             Ok(_) => {
@@ -467,7 +486,7 @@ impl ScanContext {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum DeviceEvent {
     Discovered(Device),
     Connected(Device),

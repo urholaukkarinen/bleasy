@@ -15,12 +15,11 @@ async fn main() -> Result<(), Error> {
         .stop_after_first_match();
 
     // Start scanning for devices
-    let mut scanner = Scanner::new().await?;
+    let mut scanner = Scanner::new();
     scanner.start(config).await?;
 
     // Take the first discovered device
     let device = scanner.device_stream().next().await.unwrap();
-    println!("{:?}", device);
 
     // Read the battery level
     let battery_level = device.characteristic(BATTERY_LEVEL).await?.unwrap();

@@ -1,19 +1,25 @@
+use crate::scanner::Session;
 use crate::{Characteristic, Service};
 use btleplug::api::bleuuid::{uuid_from_u16, uuid_from_u32};
 use btleplug::api::{BDAddr, Peripheral as _};
 use btleplug::platform::Peripheral;
 use btleplug::Result;
 use std::ops::Deref;
+use std::sync::Arc;
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Device {
+    _session: Arc<Session>,
     peripheral: Peripheral,
 }
 
 impl Device {
-    pub(crate) fn new(peripheral: Peripheral) -> Self {
-        Self { peripheral }
+    pub(crate) fn new(session: Arc<Session>, peripheral: Peripheral) -> Self {
+        Self {
+            _session: session,
+            peripheral,
+        }
     }
 
     pub fn address(&self) -> BDAddr {

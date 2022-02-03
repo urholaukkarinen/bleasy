@@ -13,7 +13,7 @@ async fn main() -> Result<(), Error> {
         .filter_by_characteristics(|chars| chars.contains(&HEART_RATE_MEASUREMENT))
         .stop_after_first_match();
 
-    let mut scanner = Scanner::new().await?;
+    let mut scanner = Scanner::new();
     scanner.start(config).await?;
 
     let mut device_stream = scanner.device_stream();
@@ -32,6 +32,7 @@ async fn main() -> Result<(), Error> {
     let mut hr_stream = hr_measurement.subscribe().await?;
 
     while let Some(hr) = hr_stream.next().await {
+        println!("RSSI: {}", device.rssi().await.unwrap_or(0));
         println!("{:?}", hr);
     }
 

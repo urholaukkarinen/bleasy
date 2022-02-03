@@ -9,7 +9,7 @@ async fn main() -> Result<(), Error> {
     pretty_env_logger::init();
 
     // Create a new BLE device scanner
-    let mut scanner = Scanner::new().await?;
+    let mut scanner = Scanner::new();
 
     // Start the scanner with default configuration
     scanner.start(ScanConfig::default()).await?;

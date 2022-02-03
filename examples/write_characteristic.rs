@@ -19,7 +19,7 @@ async fn main() -> Result<(), Error> {
         .filter_by_name(move |n| n.eq(&name))
         .stop_after_first_match();
 
-    let mut scanner = Scanner::new().await?;
+    let mut scanner = Scanner::new();
     scanner.start(config).await?;
 
     let mut device_stream = scanner.device_stream();

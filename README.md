@@ -22,18 +22,17 @@ use futures::StreamExt;
 async fn main() -> Result<(), Error> {
     pretty_env_logger::init();
 
-    // Create a filter for devices that have battery level characteristic
+    // Filter devices that have battery level characteristic
     let config = ScanConfig::default()
         .filter_by_characteristics(|uuids| uuids.contains(&BATTERY_LEVEL))
         .stop_after_first_match();
 
     // Start scanning for devices
-    let mut scanner = Scanner::new().await?;
+    let mut scanner = Scanner::new();
     scanner.start(config).await?;
 
     // Take the first discovered device
     let device = scanner.device_stream().next().await.unwrap();
-    println!("{:?}", device);
 
     // Read the battery level
     let battery_level = device.characteristic(BATTERY_LEVEL).await?.unwrap();
