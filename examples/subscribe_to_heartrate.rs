@@ -22,7 +22,7 @@ async fn main() -> Result<(), Error> {
     scanner.stop().await?;
 
     for service in device.services().await.unwrap() {
-        println!("Service: {}", service.uuid().to_string());
+        println!("Service: {}", service.uuid());
     }
 
     let hr_measurement = device

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::{Duration, Instant};
 
 use btleplug::api::{BDAddr, Central, CentralEvent, Manager as _, Peripheral as _};
@@ -92,7 +92,7 @@ pub(crate) struct Session {
 }
 
 pub struct Scanner {
-    session: Option<Arc<Session>>,
+    session: Weak<Session>,
     event_sender: Sender<DeviceEvent>,
     scan_stopper: Option<Trigger>,
     device_stream_stoppers: Arc<RwLock<Vec<Trigger>>>,
@@ -109,7 +109,7 @@ impl Scanner {
         let (event_sender, _) = broadcast::channel(16);
 
         Self {
-            session: None,
+            session: Weak::new(),
             event_sender,
             scan_stopper: None,
             device_stream_stoppers: Arc::new(RwLock::new(Vec::new())),
@@ -118,7 +118,7 @@ impl Scanner {
 
     /// Start scanning for ble devices.
     pub async fn start(&mut self, config: ScanConfig) -> Result<(), Error> {
-        if self.session.is_some() {
+        if self.session.upgrade().is_some() {
             log::info!("Scanner is already started.");
             return Ok(());
         }
@@ -147,14 +147,14 @@ impl Scanner {
         .await?;
 
         self.scan_stopper = Some(stopper);
-        self.session = Some(session);
+        self.session = Arc::downgrade(&session);
 
         Ok(())
     }
 
     /// Stop scanning for ble devices.
     pub async fn stop(&mut self) -> Result<(), Error> {
-        if let Some(session) = self.session.take() {
+        if let Some(session) = self.session.upgrade() {
             session.adapter.stop_scan().await?;
             self.scan_stopper.take();
             self.device_stream_stoppers.write().unwrap().clear();
@@ -163,6 +163,11 @@ impl Scanner {
         }
 
         Ok(())
+    }
+
+    /// Returns true if the scanner is active.
+    pub fn is_active(&self) -> bool {
+        self.session.upgrade().is_some()
     }
 
     /// Create a new stream that receives ble device events.
@@ -312,7 +317,7 @@ impl ScanContext {
             if self.matched.contains(&peripheral_id) {
                 self.event_sender
                     .send(DeviceEvent::Updated(Device::new(
-                        self.session.clone(),
+                        self.session.adapter.clone(),
                         peripheral,
                     )))
                     .ok();
@@ -331,7 +336,7 @@ impl ScanContext {
             if self.matched.contains(&peripheral_id) {
                 self.event_sender
                     .send(DeviceEvent::Connected(Device::new(
-                        self.session.clone(),
+                        self.session.adapter.clone(),
                         peripheral,
                     )))
                     .ok();
@@ -348,7 +353,7 @@ impl ScanContext {
             if self.matched.contains(&peripheral_id) {
                 self.event_sender
                     .send(DeviceEvent::Disconnected(Device::new(
-                        self.session.clone(),
+                        self.session.adapter.clone(),
                         peripheral,
                     )))
                     .ok();
@@ -422,7 +427,7 @@ impl ScanContext {
 
         log::info!("Found device: {:?}", peripheral);
 
-        let device = Device::new(self.session.clone(), peripheral);
+        let device = Device::new(self.session.adapter.clone(), peripheral);
 
         match self.event_sender.send(DeviceEvent::Discovered(device)) {
             Ok(_) => {
