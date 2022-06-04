@@ -7,10 +7,7 @@ use btleplug::{
     platform::{Adapter, Peripheral},
     Result,
 };
-use std::collections::HashMap;
 use std::ops::Deref;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use uuid::Uuid;
 
 #[derive(Clone)]
