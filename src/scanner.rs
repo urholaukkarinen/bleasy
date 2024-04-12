@@ -469,21 +469,26 @@ impl ScanContext {
             let mut characteristics = Vec::new();
             characteristics.extend(peripheral.characteristics());
 
-            if characteristics.is_empty() {
-                log::debug!("Discovering characteristics for {}", peripheral.address());
-                // TODO: handle errors
-                peripheral.discover_services().await.ok();
-                characteristics.extend(peripheral.characteristics());
-            }
-
             passed &= if characteristics.is_empty() {
-                false
+                let address = peripheral.address();
+                log::debug!("Discovering characteristics for {}", address);
+
+                match peripheral.discover_services().await {
+                    Ok(()) => {
+                        characteristics.extend(peripheral.characteristics());
+                        let characteristics = characteristics
+                            .into_iter()
+                            .map(|c| c.uuid)
+                            .collect::<Vec<_>>();
+                        filter_by_characteristics(characteristics.as_slice())
+                    },
+                    Err(e) => {
+                        log::warn!("Error: `{:?}` when discovering characteristics for {}", e, address);
+                        false
+                    },
+                }
             } else {
-                let characteristics = characteristics
-                    .into_iter()
-                    .map(|c| c.uuid)
-                    .collect::<Vec<_>>();
-                filter_by_characteristics(characteristics.as_slice())
+                true
             }
         }
 
