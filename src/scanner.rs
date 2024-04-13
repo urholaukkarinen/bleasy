@@ -30,7 +30,7 @@ pub struct ScanConfig {
     /// The scan is stopped when timeout duration is reached.
     timeout: Option<Duration>,
     /// Force disconnect when listen the device is connected.
-    force_disconnect:       bool,
+    force_disconnect: bool,
 }
 
 impl ScanConfig {
@@ -434,30 +434,30 @@ impl ScanContext {
             return;
         }
 
-        if let Ok(connected) =  peripheral.is_connected().await {
+        if let Ok(connected) = peripheral.is_connected().await {
             if !connected {
                 return;
             }
         }
 
+        if self.config.address_filter.is_none() && self.config.name_filter.is_none() {
+            return;
+        }
+
+        let Ok(Some(properties)) = peripheral.properties().await else {
+            return;
+        };
+
         if let Some(filter_by_address) = self.config.address_filter.as_ref() {
-            if let Ok(property) = peripheral.properties().await {
-                if let Some(property) = property {
-                    if filter_by_address(property.address) {
-                        peripheral.disconnect().await.ok();
-                    }
-                }
+            if filter_by_address(properties.address) {
+                peripheral.disconnect().await.ok();
             }
         }
 
         if let Some(filter_by_name) = self.config.name_filter.as_ref() {
-            if let Ok(property) = peripheral.properties().await {
-                if let Some(property) = property {
-                    if let Some(local_name) = property.local_name {
-                        if filter_by_name(local_name.as_str()) {
-                            peripheral.disconnect().await.ok();
-                        }
-                    }
+            if let Some(local_name) = properties.local_name {
+                if filter_by_name(local_name.as_str()) {
+                    peripheral.disconnect().await.ok();
                 }
             }
         }
@@ -523,11 +523,15 @@ impl ScanContext {
                             .map(|c| c.uuid)
                             .collect::<Vec<_>>();
                         filter_by_characteristics(characteristics.as_slice())
-                    },
+                    }
                     Err(e) => {
-                        log::warn!("Error: `{:?}` when discovering characteristics for {}", e, address);
+                        log::warn!(
+                            "Error: `{:?}` when discovering characteristics for {}",
+                            e,
+                            address
+                        );
                         false
-                    },
+                    }
                 }
             } else {
                 true
