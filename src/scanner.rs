@@ -29,6 +29,8 @@ pub struct ScanConfig {
     max_results: Option<usize>,
     /// The scan is stopped when timeout duration is reached.
     timeout: Option<Duration>,
+    /// Force disconnect when listen the device is connected.
+    force_disconnect:       bool,
 }
 
 impl ScanConfig {
@@ -73,6 +75,12 @@ impl ScanConfig {
     /// Stop the scan after given duration
     pub fn stop_after_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
+        self
+    }
+
+    /// Force disconnect when device is connected
+    pub fn force_disconnect(mut self, force_disconnect: bool) -> Self {
+        self.force_disconnect = force_disconnect;
         self
     }
 
@@ -410,6 +418,8 @@ impl ScanContext {
             } else if let Some(false) = self.passes_post_connect_filters(&peripheral).await {
                 self.skip_peripheral(&peripheral).await;
                 return;
+            } else if self.config.force_disconnect {
+                peripheral.disconnect().await.ok();
             }
         }
 
@@ -418,7 +428,39 @@ impl ScanContext {
 
     async fn skip_peripheral(&mut self, peripheral: &Peripheral) {
         self.filtered.insert(peripheral.id());
-        peripheral.disconnect().await.ok();
+
+        if self.config.force_disconnect {
+            peripheral.disconnect().await.ok();
+            return;
+        }
+
+        if let Ok(connected) =  peripheral.is_connected().await {
+            if !connected {
+                return;
+            }
+        }
+
+        if let Some(filter_by_address) = self.config.address_filter.as_ref() {
+            if let Ok(property) = peripheral.properties().await {
+                if let Some(property) = property {
+                    if filter_by_address(property.address) {
+                        peripheral.disconnect().await.ok();
+                    }
+                }
+            }
+        }
+
+        if let Some(filter_by_name) = self.config.name_filter.as_ref() {
+            if let Ok(property) = peripheral.properties().await {
+                if let Some(property) = property {
+                    if let Some(local_name) = property.local_name {
+                        if filter_by_name(local_name.as_str()) {
+                            peripheral.disconnect().await.ok();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     async fn add_peripheral(&mut self, peripheral: Peripheral) {
@@ -469,21 +511,26 @@ impl ScanContext {
             let mut characteristics = Vec::new();
             characteristics.extend(peripheral.characteristics());
 
-            if characteristics.is_empty() {
-                log::debug!("Discovering characteristics for {}", peripheral.address());
-                // TODO: handle errors
-                peripheral.discover_services().await.ok();
-                characteristics.extend(peripheral.characteristics());
-            }
-
             passed &= if characteristics.is_empty() {
-                false
+                let address = peripheral.address();
+                log::debug!("Discovering characteristics for {}", address);
+
+                match peripheral.discover_services().await {
+                    Ok(()) => {
+                        characteristics.extend(peripheral.characteristics());
+                        let characteristics = characteristics
+                            .into_iter()
+                            .map(|c| c.uuid)
+                            .collect::<Vec<_>>();
+                        filter_by_characteristics(characteristics.as_slice())
+                    },
+                    Err(e) => {
+                        log::warn!("Error: `{:?}` when discovering characteristics for {}", e, address);
+                        false
+                    },
+                }
             } else {
-                let characteristics = characteristics
-                    .into_iter()
-                    .map(|c| c.uuid)
-                    .collect::<Vec<_>>();
-                filter_by_characteristics(characteristics.as_slice())
+                true
             }
         }
 
