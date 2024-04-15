@@ -31,7 +31,7 @@ pub struct ScanConfig {
     /// The scan is stopped when timeout duration is reached.
     timeout:                Option<Duration>,
     /// Force disconnect when listen the device is connected.
-    force_disconnect:       bool,
+    force_disconnect: bool,
 }
 
 impl ScanConfig {
@@ -460,19 +460,19 @@ impl ScannerWorker {
             return;
         }
 
-        if let Ok(connected) =  peripheral.is_connected().await {
+        if let Ok(connected) = peripheral.is_connected().await {
             if !connected {
                 return;
             }
         }
 
-        if let Some(filter_by_address) = self.config.address_filter.as_ref() {
-            if let Ok(Some(property)) = peripheral.properties().await {
-                if filter_by_address(property.address) {
-                    peripheral.disconnect().await.ok();
-                }
-            };
+        if self.config.address_filter.is_none() && self.config.name_filter.is_none() {
+            return;
         }
+
+        let Ok(Some(properties)) = peripheral.properties().await else {
+            return;
+        };
 
         if let Some(filter_by_name) = self.config.name_filter.as_ref() {
             if let Ok(Some(property)) = peripheral.properties().await {
@@ -548,11 +548,15 @@ impl ScannerWorker {
                             .map(|c| c.uuid)
                             .collect::<Vec<_>>();
                         filter_by_characteristics(characteristics.as_slice())
-                    },
+                    }
                     Err(e) => {
-                        log::warn!("Error: `{:?}` when discovering characteristics for {}", e, address);
+                        log::warn!(
+                            "Error: `{:?}` when discovering characteristics for {}",
+                            e,
+                            address
+                        );
                         false
-                    },
+                    }
                 }
             } else {
                 true
