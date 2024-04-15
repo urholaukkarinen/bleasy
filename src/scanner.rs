@@ -466,13 +466,13 @@ impl ScannerWorker {
             }
         }
 
-        if self.config.address_filter.is_none() && self.config.name_filter.is_none() {
-            return;
+        if let Some(filter_by_address) = self.config.address_filter.as_ref() {
+            if let Ok(Some(property)) = peripheral.properties().await {
+                if filter_by_address(property.address) {
+                    peripheral.disconnect().await.ok();
+                }
+            };
         }
-
-        let Ok(Some(properties)) = peripheral.properties().await else {
-            return;
-        };
 
         if let Some(filter_by_name) = self.config.name_filter.as_ref() {
             if let Ok(Some(property)) = peripheral.properties().await {
