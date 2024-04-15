@@ -23,7 +23,7 @@
 //!         .stop_after_first_match();
 //!
 //!     // Start scanning for devices
-//!     let mut scanner = Scanner::new().await?;
+//!     let mut scanner = Scanner::new();
 //!     scanner.start(config).await?;
 //!
 //!     // Take the first discovered device
@@ -43,13 +43,11 @@
 pub use btleplug::{api::BDAddr, Error, Result};
 
 pub use characteristic::Characteristic;
-pub use device::Device;
-pub use scanner::{DeviceEvent, ScanConfig, Scanner};
-pub use service::Service;
+pub use device::{Device, DeviceEvent};
+pub use scanner::{ScanConfig, Scanner};
 
 mod device;
 mod scanner;
 
 mod characteristic;
 pub mod common;
-mod service;

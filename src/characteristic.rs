@@ -5,9 +5,9 @@ use futures::{Stream, StreamExt};
 use std::pin::Pin;
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Characteristic {
-    pub(crate) peripheral: Peripheral,
+    pub(crate) peripheral:     Peripheral,
     pub(crate) characteristic: BtleCharacteristic,
 }
 
@@ -24,6 +24,7 @@ impl Characteristic {
         self.write(data, WriteType::WithoutResponse).await
     }
 
+    #[inline]
     async fn write(&self, data: &[u8], write_type: WriteType) -> Result<()> {
         self.peripheral
             .write(&self.characteristic, data, write_type)
@@ -45,6 +46,7 @@ impl Characteristic {
         })))
     }
 
+    #[inline]
     pub async fn unsubscribe(&self) -> Result<()> {
         self.peripheral.unsubscribe(&self.characteristic).await
     }
