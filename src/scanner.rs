@@ -170,7 +170,7 @@ impl Scanner {
     }
 
     /// Stop scanning for ble devices.
-    pub async fn stop(&mut self) -> Result<(), Error> {
+    pub async fn stop(&self) -> Result<(), Error> {
         self.scan_stopper.store(true, Ordering::Relaxed);
         self.stoppers.write().unwrap().clear();
         log::info!("Scanner is stopped.");
@@ -185,7 +185,7 @@ impl Scanner {
 
     /// Create a new stream that receives ble device events.
     pub fn device_event_stream(
-        &mut self,
+        &self,
     ) -> Valved<Pin<Box<dyn Stream<Item = DeviceEvent> + Send>>> {
         let receiver = self.event_sender.subscribe();
 
@@ -211,7 +211,7 @@ impl Scanner {
     }
 
     /// Create a new stream that receives discovered ble devices.
-    pub fn device_stream(&mut self) -> Valved<Pin<Box<dyn Stream<Item = Device> + Send>>> {
+    pub fn device_stream(&self) -> Valved<Pin<Box<dyn Stream<Item = Device> + Send>>> {
         let receiver = self.event_sender.subscribe();
 
         let stream: Pin<Box<dyn Stream<Item = Device> + Send>> =
@@ -378,7 +378,7 @@ impl ScannerWorker {
         }
     }
 
-    async fn on_device_disconnected(&mut self, peripheral_id: PeripheralId) {
+    async fn on_device_disconnected(&self, peripheral_id: PeripheralId) {
         if let Ok(peripheral) = self.session.adapter.peripheral(&peripheral_id).await {
             log::trace!("Device disconnected: {:?}", peripheral);
 
@@ -506,7 +506,7 @@ impl ScannerWorker {
 
     /// Checks if the peripheral passes all of the filters that
     /// do not require a connection to the device.
-    async fn passes_pre_connect_filters(&mut self, peripheral: &Peripheral) -> Option<bool> {
+    async fn passes_pre_connect_filters(&self, peripheral: &Peripheral) -> Option<bool> {
         let mut passed = true;
 
         if let Some(filter_by_addr) = self.config.address_filter.as_ref() {
@@ -525,7 +525,7 @@ impl ScannerWorker {
 
     /// Checks if the peripheral passes all of the filters that
     /// require a connection to the device.
-    async fn passes_post_connect_filters(&mut self, peripheral: &Peripheral) -> Option<bool> {
+    async fn passes_post_connect_filters(&self, peripheral: &Peripheral) -> Option<bool> {
         let mut passed = true;
 
         if !peripheral.is_connected().await.unwrap_or(false) {
