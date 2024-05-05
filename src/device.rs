@@ -1,19 +1,18 @@
-use crate::{Characteristic, Service};
+use crate::Characteristic;
 use btleplug::{
     api::{
-        bleuuid::{uuid_from_u16, uuid_from_u32},
         BDAddr, Peripheral as _,
     },
     platform::{Adapter, Peripheral},
     Result,
 };
-use std::ops::Deref;
+use btleplug::api::Service;
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Device {
-    _adapter: Adapter,
-    peripheral: Peripheral,
+    pub(self) _adapter:    Adapter,
+    pub(crate) peripheral: Peripheral,
 }
 
 impl Device {
@@ -24,11 +23,13 @@ impl Device {
         }
     }
 
+    #[inline]
     pub fn address(&self) -> BDAddr {
         self.peripheral.address()
     }
 
     /// Signal strength
+    #[inline]
     pub async fn rssi(&self) -> Option<i16> {
         self.peripheral
             .properties()
@@ -39,6 +40,7 @@ impl Device {
     }
 
     /// Local name of the device
+    #[inline]
     pub async fn local_name(&self) -> Option<String> {
         self.peripheral
             .properties()
@@ -49,6 +51,7 @@ impl Device {
     }
 
     /// Disconnect from the device
+    #[inline]
     pub async fn disconnect(&self) -> Result<()> {
         self.peripheral.disconnect().await
     }
@@ -67,10 +70,6 @@ impl Device {
 
         Ok(services
             .into_iter()
-            .map(|service| Service {
-                peripheral: self.peripheral.clone(),
-                service,
-            })
             .collect::<Vec<_>>())
     }
 
@@ -111,15 +110,10 @@ impl Device {
     }
 
     /// Get characteristic by UUID
-    pub async fn characteristic<T: Into<BleUuid>>(
-        &self,
-        uuid: T,
-    ) -> Result<Option<Characteristic>> {
+    pub async fn characteristic(&self, uuid: Uuid) -> Result<Option<Characteristic>> {
         if !self.peripheral.is_connected().await? {
             self.peripheral.connect().await?;
         }
-
-        let uuid: Uuid = *uuid.into();
 
         let mut characteristics = self.peripheral.characteristics();
         if characteristics.is_empty() {
@@ -137,30 +131,10 @@ impl Device {
     }
 }
 
-pub struct BleUuid(Uuid);
-
-impl Deref for BleUuid {
-    type Target = Uuid;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<Uuid> for BleUuid {
-    fn from(value: Uuid) -> Self {
-        BleUuid(value)
-    }
-}
-
-impl From<u16> for BleUuid {
-    fn from(value: u16) -> Self {
-        BleUuid(uuid_from_u16(value))
-    }
-}
-
-impl From<u32> for BleUuid {
-    fn from(value: u32) -> Self {
-        BleUuid(uuid_from_u32(value))
-    }
+#[derive(Debug, Clone)]
+pub enum DeviceEvent {
+    Discovered(Device),
+    Connected(Device),
+    Disconnected(Device),
+    Updated(Device),
 }
